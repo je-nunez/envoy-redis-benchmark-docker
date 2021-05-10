@@ -1,0 +1,48 @@
+version: "3.7"
+
+services:
+
+  proxy:
+    security_opt:
+      - seccomp:"./allow_perf_event_open_seccomp.json"
+    cap_drop:
+      - ALL
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      core:
+        soft: -1
+        hard: -1
+    build:
+      context: .
+      dockerfile: Dockerfile-proxy
+    networks:
+      - envoymesh
+    ports:
+      - "1999:1999"
+      - "8001:8001"
+    volumes:
+      - type: bind
+        source: ./proxy_results
+        target: /results
+    labels:
+      org.my-test.role: "proxy"
+      org.my-test.filter: "redis"
+
+
+  redis:
+    build:
+      context: .
+      dockerfile: Dockerfile-redis
+    networks:
+      envoymesh:
+        aliases:
+          - redis_server
+    labels:
+      org.my-test.role: "database"
+      org.my-test.filter: "redis"
+
+
+networks:
+  envoymesh: {}

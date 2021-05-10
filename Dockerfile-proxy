@@ -1,0 +1,76 @@
+ARG ENVOY_TAG_VERSION=latest
+
+FROM ubuntu:18.04 as builder
+
+ARG REDIS_URL=http://download.redis.io/redis-stable.tar.gz
+ARG MEMTIER_URL=https://github.com/RedisLabs/memtier_benchmark
+ARG MEMTIER_TAG=1.3.0
+
+RUN apt-get update
+RUN \
+  DEBIAN_FRONTEND=noninteractive \
+  apt-get install -y \
+    software-properties-common \
+    build-essential autoconf automake libpcre3-dev libevent-dev \
+    pkg-config zlib1g-dev libssl-dev libboost-all-dev cmake flex \
+    libjemalloc1 libjemalloc-dev \
+    git
+#
+# If the Redis-CLI were needed for the script (bottom of this file) in the
+# proxy image:
+RUN add-apt-repository ppa:redislabs/redis   && \
+  DEBIAN_FRONTEND=noninteractive \
+  apt-get update  && \
+  apt-get install -y redis-tools
+
+# Build Redis MemTier-Benchmark
+RUN git clone --depth 1 --branch $MEMTIER_TAG  $MEMTIER_URL  /memtier_benchmark
+WORKDIR /memtier_benchmark
+RUN autoreconf -ivf && ./configure && make && make install
+
+
+
+FROM envoyproxy/envoy-debug-dev:$ENVOY_TAG_VERSION
+# FROM envoyproxy/envoy-dev:latest
+
+COPY --from=builder /usr/local/bin/memtier_benchmark \
+                    /usr/local/bin/memtier_benchmark
+
+COPY --from=builder /usr/bin/redis-benchmark \
+                    /usr/local/bin/redis-benchmark
+
+# Redis CLI
+COPY --from=builder /usr/bin/redis-cli \
+                    /usr/local/bin/redis-cli
+
+# Install the (Ubuntu Bionic) Linux-Perf (the base image of this container is
+# from Ubuntu Bionic). It is recommended by Ubuntu to install
+# linux-tools-$(uname -r) to get the Linux-Perf client for the specific
+# (Ubuntu) kernel, but, since this is inside a container which can be built
+# on a non-Ubuntu docker host, then $(uname -r) for the non-Ubuntu docker
+# host can return, during the docker building phase, an unknown package name
+# "linux-tools-$(uname -r)" not found in the Ubuntu package repositories.
+# Below it is installed a Perf client for 4.15.0.
+# https://stackoverflow.com/questions/46674444/is-it-possible-to-run-linux-perf-tool-inside-docker-container
+
+ARG ubuntu_specific_linux_tools=linux-tools-4.15.0-142
+# ARG ubuntu_specific_linux_tools=linux-tools-gke-5.4
+RUN \
+  DEBIAN_FRONTEND=noninteractive \
+  apt-get update && \
+  apt-get -y install curl xz-utils libevent-dev \
+                     linux-tools-generic $ubuntu_specific_linux_tools && \
+  apt-get clean && \
+  apt autoremove --purge
+
+RUN ln -sf  \
+       $( dpkg -L $ubuntu_specific_linux_tools | grep '/usr/lib/.*/perf$' ) \
+       /usr/bin/perf
+
+
+COPY ./envoy.yaml /etc/envoy.yaml
+COPY ./envoy_load_test.sh ./test_global_vars.sh ./test_actual_functions.sh \
+     /root/
+RUN chmod go+r /etc/envoy.yaml
+
+ENTRYPOINT ["/bin/bash", "/root/envoy_load_test.sh"]
