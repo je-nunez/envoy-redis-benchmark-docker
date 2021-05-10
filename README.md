@@ -17,7 +17,7 @@ where the results be left:
            mkdir ./proxy_results   && \
            sudo chown root: ./proxy_results
 
-Then, afterwards, In this directory, run:
+Then, afterwards, in this directory, run:
 
       docker-compose pull
        
